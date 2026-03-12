@@ -1,42 +1,48 @@
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 import requests
+import json
 
 app = FastAPI()
 
-# carpeta de archivos estáticos
-app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
-
+# Configuración de CORS para permitir peticiones desde el frontend (puerto 5173)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # En producción, especifica el dominio exacto
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class Prompt(BaseModel):
     prompt: str
 
 
-@app.get("/")
-def root():
-    return FileResponse("frontend/index.html")
-
-
 @app.post("/chat")
 def chat(data: Prompt):
 
-    try:
+    def stream():
 
         response = requests.post(
             "http://ollama:11434/api/generate",
             json={
                 "model": "gemma:2b",
                 "prompt": data.prompt,
-                "stream": False
+                "stream": True
             },
+            stream=True
         )
 
-        result = response.json()
+        for line in response.iter_lines():
 
-        return {"response": result.get("response", "No response")}
+            if line:
 
-    except Exception as e:
+                chunk = json.loads(line)
 
-        return {"response": f"Error conectando con Ollama: {str(e)}"}
+                if "response" in chunk:
+                    yield chunk["response"]
+
+    return StreamingResponse(stream(), media_type="text/plain")
+    
